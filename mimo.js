@@ -1,9 +1,9 @@
 /**
  * MiMo TTS Provider for SillyTavern
- * 支持小米 MiMo V2.5 TTS 系列
- * 
- * MiMo TTS 使用 chat/completions 端点（非 OpenAI /v1/audio/speech）
- * 支持：预置音色 + 语音设计（Voice Design）+ 风格标签
+ * Client-side TTS provider for Xiaomi MiMo TTS API
+ *
+ * MiMo TTS uses /v1/chat/completions (NOT OpenAI's /v1/audio/speech)
+ * This provider calls a server-side proxy at /api/mimo/generate-voice
  */
 
 import { getRequestHeaders } from '../../../script.js';
@@ -13,41 +13,35 @@ export { MiMoTtsProvider };
 
 class MiMoTtsProvider {
     static voices = [
-        { name: '冰糖（中文女）', voice_id: '冰糖', lang: 'zh-CN', gender: 'female' },
-        { name: '茉莉（中文女）', voice_id: '茉莉', lang: 'zh-CN', gender: 'female' },
-        { name: '苏打（中文男）', voice_id: '苏打', lang: 'zh-CN', gender: 'male' },
-        { name: '白桦（中文男）', voice_id: '白桦', lang: 'zh-CN', gender: 'male' },
-        { name: 'Mia（英文女）', voice_id: 'Mia', lang: 'en-US', gender: 'female' },
-        { name: 'Chloe（英文女）', voice_id: 'Chloe', lang: 'en-US', gender: 'female' },
-        { name: 'Milo（英文男）', voice_id: 'Milo', lang: 'en-US', gender: 'male' },
-        { name: 'Dean（英文男）', voice_id: 'Dean', lang: 'en-US', gender: 'male' },
+        { name: '冰糖', voice_id: '冰糖', lang: 'zh-CN', gender: 'female' },
+        { name: '茉莉', voice_id: '茉莉', lang: 'zh-CN', gender: 'female' },
+        { name: '知性的姐姐', voice_id: '知性的姐姐', lang: 'zh-CN', gender: 'female' },
+        { name: '甜心少女', voice_id: '甜心少女', lang: 'zh-CN', gender: 'female' },
+        { name: '阳光青年', voice_id: '阳光青年', lang: 'zh-CN', gender: 'male' },
+        { name: '活泼小女', voice_id: '活泼小女', lang: 'zh-CN', gender: 'female' },
+        { name: '御姐', voice_id: '御姐', lang: 'zh-CN', gender: 'female' },
+        { name: '温柔小姨', voice_id: '温柔小姨', lang: 'zh-CN', gender: 'female' },
+        { name: '儿语姐姐', voice_id: '儿语姐姐', lang: 'zh-CN', gender: 'female' },
+        { name: '酷拽学姐', voice_id: '酷拽学姐', lang: 'zh-CN', gender: 'female' },
     ];
 
-    // 语音设计预设
     static voiceDesignPresets = [
-        { id: 'default', name: '默认（自然朗读）', prompt: '请用自然的语气朗读以下文本' },
-        { id: 'gentle', name: '温柔女声', prompt: '温柔、轻柔的女声，语速稍慢，带着温暖的笑意' },
-        { id: 'energetic', name: '活力少年', prompt: '充满活力的少年声音，语速偏快，语气上扬，带着兴奋感' },
-        { id: 'calm', name: '沉稳男声', prompt: '低沉、稳重的男声，语速适中，像新闻主播一样专业' },
-        { id: 'cute', name: '可爱萝莉', prompt: '软萌可爱的小女孩声音，语速偏快，带着天真的好奇感' },
-        { id: 'cold', name: '高冷御姐', prompt: '冰冷、慵懒却极具威压的低音御姐，语速极慢，每个字都像是在舌尖滚过才吐出来' },
-        { id: 'storyteller', name: '故事讲述者', prompt: '富有磁性的讲故事声音，语速适中，抑扬顿挫，像在朗读一本引人入胜的小说' },
-        { id: 'sing', name: '唱歌模式', prompt: '唱歌' },
-        { id: 'custom', name: '自定义...', prompt: '' },
+        { id: 'animation', name: '🎬 动画配音', instruction: '用夸张、富有表现力的动画配音风格朗读' },
+        { id: 'podcast', name: '🎙️ 播客讲述', instruction: '用自然、轻松的播客讲述风格朗读，语速适中' },
+        { id: 'gentle', name: '🌸 温柔安抚', instruction: '用温柔、轻柔、安抚的声音朗读，语速稍慢' },
+        { id: 'cheerful', name: '☀️ 阳光开朗', instruction: '用阳光、开朗、充满活力的声音朗读，语速偏快' },
     ];
 
     settings;
-    voices = [];
     separator = ' . ';
     audioElement = document.createElement('audio');
 
     defaultSettings = {
-        voiceMap: {},
-        model: 'mimo-v2.5-tts',
-        audio_format: 'wav',
-        api_endpoint: 'https://api.xiaomimimo.com/v1',
-        voice_design: 'default',
-        custom_voice_prompt: '',
+        apiHost: 'https://api.xiaomimimo.com',
+        model: 'mimo-tts-01',
+        voice: '冰糖',
+        voiceDesignMode: 'default',
+        voiceDesignInstruction: '',
     };
 
     get settingsHtml() {
@@ -59,66 +53,73 @@ class MiMoTtsProvider {
             `<option value="${p.id}">${p.name}</option>`
         ).join('');
 
-        let html = `
+        return `
         <div class="mimo-tts-settings">
-            <div>
-                <small>MiMo TTS 使用 chat/completions 端点（非 OpenAI /v1/audio/speech）</small>
+            <div class="flex-container alignItemsCenter" style="margin-bottom: 10px;">
+                <span class="menu_button menu_button_icon" title="MiMo TTS">
+                    <i class="fa-solid fa-volume-high"></i>
+                    <span>MiMo TTS</span>
+                </span>
+                <small style="margin-left: 8px; opacity: 0.7;">小米 MiMo 语音合成</small>
             </div>
-            
-            <label for="mimo-tts-endpoint">API Endpoint:</label>
+
+            <label for="mimo-tts-api-host">API 地址：</label>
             <div class="flex-container alignItemsCenter">
                 <div class="flex1">
-                    <input id="mimo-tts-endpoint" type="text" class="text_pole" maxlength="500" 
-                           value="https://api.xiaomimimo.com/v1"/>
+                    <input id="mimo-tts-api-host" type="text" class="text_pole" maxlength="500"
+                           placeholder="https://api.xiaomimimo.com" />
                 </div>
-                <div id="mimo-tts-key" class="menu_button menu_button_icon manage-api-keys" data-key="api_key_custom_openai_tts">
+                <div id="mimo-tts-key" class="menu_button menu_button_icon manage-api-keys"
+                     data-key="api_key_custom_mimo_tts" title="管理 API Key">
                     <i class="fa-solid fa-key"></i>
                     <span>API Key</span>
                 </div>
             </div>
-            
-            <label for="mimo-tts-model">Model:</label>
-            <input id="mimo-tts-model" type="text" class="text_pole" maxlength="500" value="mimo-v2.5-tts"/>
-            
-            <label for="mimo-tts-format">Audio Format:</label>
-            <select id="mimo-tts-format" class="text_pole">
-                <option value="wav">WAV (推荐)</option>
-                <option value="mp3">MP3</option>
+
+            <label for="mimo-tts-model">模型：</label>
+            <input id="mimo-tts-model" type="text" class="text_pole" maxlength="200"
+                   placeholder="mimo-tts-01" />
+
+            <label for="mimo-tts-voice">音色：</label>
+            <select id="mimo-tts-voice" class="text_pole">
+                ${voiceOptions}
             </select>
-            
-            <hr>
+
+            <hr />
             <div><b>🎭 语音设计（Voice Design）</b></div>
-            <small>选择预设风格或自定义语音设计指令</small>
-            
-            <label for="mimo-tts-voice-design">语音设计风格:</label>
+            <small style="opacity: 0.7;">选择预设风格或自定义语音设计指令</small>
+
+            <label for="mimo-tts-voice-design">语音设计风格：</label>
             <select id="mimo-tts-voice-design" class="text_pole">
+                <option value="default">默认（自然朗读）</option>
                 ${presetOptions}
+                <option value="custom">自定义...</option>
             </select>
-            
-            <div id="mimo-custom-voice-container" style="display:none;">
-                <label for="mimo-custom-voice">自定义语音设计指令:</label>
+
+            <div id="mimo-custom-voice-container" style="display: none;">
+                <label for="mimo-custom-voice">自定义语音设计指令：</label>
                 <textarea id="mimo-custom-voice" class="text_pole textarea_compact autoSetHeight" rows="3"
-                    placeholder="例：冰冷、慵懒却极具威压的低音御姐。语速极慢，每个字都像是在舌尖滚过才吐出来。"></textarea>
-                <small>支持导演模式：写清【角色】【场景】【指导】三个维度</small>
+                    placeholder="例：用低沉、磁性的声音朗读，语速适中，带有讲故事的感觉"></textarea>
+                <small style="opacity: 0.7;">支持导演模式：写清【角色】【场景】【指导】三个维度</small>
             </div>
-            
-            <hr>
+
+            <hr />
             <div><b>📖 使用说明</b></div>
-            <small>
-                • 风格标签：在文本中用 (开心) (悲伤) (唱歌) 等标签<br>
-                • 方言支持：(东北话) (四川话) (粤语) 等<br>
-                • 唱歌模式：(唱歌)歌词内容<br>
+            <small style="opacity: 0.7;">
+                • 在角色名中写入音色名（如"冰糖"）可按角色分配音色<br />
+                • 风格标签：在文本中用 (开心) (悲伤) (唱歌) 等标签<br />
+                • 方言支持：(东北话) (四川话) (粤语) 等<br />
+                • 唱歌模式：(唱歌)歌词内容<br />
             </small>
         </div>`;
-        return html;
     }
 
     async loadSettings(settings) {
-        if (Object.keys(settings).length == 0) {
+        if (Object.keys(settings).length === 0) {
             console.info('Using default MiMo TTS Provider settings');
         }
 
-        this.settings = this.defaultSettings;
+        this.settings = { ...this.defaultSettings };
 
         for (const key in settings) {
             if (key in this.settings) {
@@ -126,23 +127,23 @@ class MiMoTtsProvider {
             }
         }
 
-        $('#mimo-tts-endpoint').val(this.settings.api_endpoint);
-        $('#mimo-tts-endpoint').on('input', () => { this.onSettingsChange(); });
+        $('#mimo-tts-api-host').val(this.settings.apiHost);
+        $('#mimo-tts-api-host').on('input', () => this.onSettingsChange());
 
         $('#mimo-tts-model').val(this.settings.model);
-        $('#mimo-tts-model').on('input', () => { this.onSettingsChange(); });
+        $('#mimo-tts-model').on('input', () => this.onSettingsChange());
 
-        $('#mimo-tts-format').val(this.settings.audio_format);
-        $('#mimo-tts-format').on('change', () => { this.onSettingsChange(); });
+        $('#mimo-tts-voice').val(this.settings.voice);
+        $('#mimo-tts-voice').on('change', () => this.onSettingsChange());
 
-        $('#mimo-tts-voice-design').val(this.settings.voice_design);
+        $('#mimo-tts-voice-design').val(this.settings.voiceDesignMode);
         $('#mimo-tts-voice-design').on('change', () => {
             this.onSettingsChange();
             this.toggleCustomVoice();
         });
 
-        $('#mimo-custom-voice').val(this.settings.custom_voice_prompt);
-        $('#mimo-custom-voice').on('input', () => { this.onSettingsChange(); });
+        $('#mimo-custom-voice').val(this.settings.voiceDesignInstruction);
+        $('#mimo-custom-voice').on('input', () => this.onSettingsChange());
 
         this.toggleCustomVoice();
 
@@ -159,11 +160,11 @@ class MiMoTtsProvider {
     }
 
     onSettingsChange() {
-        this.settings.api_endpoint = $('#mimo-tts-endpoint').val();
+        this.settings.apiHost = $('#mimo-tts-api-host').val();
         this.settings.model = $('#mimo-tts-model').val();
-        this.settings.audio_format = $('#mimo-tts-format').val();
-        this.settings.voice_design = $('#mimo-tts-voice-design').val();
-        this.settings.custom_voice_prompt = $('#mimo-custom-voice').val();
+        this.settings.voice = $('#mimo-tts-voice').val();
+        this.settings.voiceDesignMode = $('#mimo-tts-voice-design').val();
+        this.settings.voiceDesignInstruction = $('#mimo-custom-voice').val();
         saveTtsProviderSettings();
     }
 
@@ -180,65 +181,72 @@ class MiMoTtsProvider {
             throw 'TTS Voice name not provided';
         }
 
-        const voice = MiMoTtsProvider.voices.find(v => v.voice_id === voiceName || v.name === voiceName);
+        const voice = MiMoTtsProvider.voices.find(
+            v => v.voice_id === voiceName || v.name === voiceName
+        );
         if (!voice) {
-            throw `TTS Voice not found: ${voiceName}`;
+            throw `MiMo TTS voice not found: ${voiceName}`;
         }
 
         return voice;
-    }
-
-    async generateTts(text, voiceId, characterName = null) {
-        const response = await this.fetchTtsGeneration(text, voiceId, characterName);
-        return response;
     }
 
     async fetchTtsVoiceObjects() {
         return MiMoTtsProvider.voices;
     }
 
-    async previewTtsVoice(_) {
-        return;
-    }
+    async generateTts(text, voiceId, characterName = null) {
+        const voice = voiceId || this.settings.voice;
+        const apiHost = this.settings.apiHost || 'https://api.xiaomimimo.com';
+        const model = this.settings.model || 'mimo-tts-01';
 
-    /**
-     * 获取当前的语音设计提示词
-     */
-    getVoiceDesignPrompt() {
-        const preset = MiMoTtsProvider.voiceDesignPresets.find(p => p.id === this.settings.voice_design);
-        if (!preset) return '请用自然的语气朗读以下文本';
-        if (preset.id === 'custom') {
-            return this.settings.custom_voice_prompt || '请用自然的语气朗读以下文本';
+        let voiceDesignMode = this.settings.voiceDesignMode || 'default';
+        let voiceDesignInstruction = this.settings.voiceDesignInstruction || '';
+
+        if (voiceDesignMode === 'custom') {
+            voiceDesignInstruction = voiceDesignInstruction || '请用自然的语气朗读以下文本';
         }
-        return preset.prompt;
-    }
 
-    async fetchTtsGeneration(inputText, voiceId, characterName = null) {
-        console.info(`MiMo TTS: Generating voice for voice_id ${voiceId}`);
-
-        const voiceDesign = this.getVoiceDesignPrompt();
+        console.info(`MiMo TTS: Generating voice="${voice}" model="${model}"`);
 
         const requestBody = {
-            input: inputText,
-            voice: voiceId,
-            model: this.settings.model,
-            audio_format: this.settings.audio_format,
-            api_endpoint: this.settings.api_endpoint,
-            voice_design: voiceDesign,
+            apiHost: apiHost,
+            model: model,
+            input: text,
+            voice: voice,
+            voice_design_mode: voiceDesignMode,
+            voice_design_instruction: voiceDesignInstruction,
         };
 
         const response = await fetch('/api/mimo/generate-voice', {
             method: 'POST',
-            headers: getRequestHeaders(),
+            headers: {
+                ...getRequestHeaders(),
+                'Content-Type': 'application/json',
+            },
             body: JSON.stringify(requestBody),
         });
 
         if (!response.ok) {
             const errorText = await response.text().catch(() => '');
-            toastr.error(errorText || response.statusText, 'MiMo TTS Generation Failed');
-            throw new Error(`HTTP ${response.status}: ${errorText}`);
+            toastr.error(errorText || response.statusText, 'MiMo TTS 生成失败');
+            throw new Error(`MiMo TTS HTTP ${response.status}: ${errorText}`);
         }
 
         return response;
+    }
+
+    async previewTtsVoice(voiceId) {
+        const voice = voiceId || this.settings.voice;
+        const previewText = '你好！我是小米MiMo语音合成，很高兴为你服务。';
+        return await this.generateTts(previewText, voice);
+    }
+
+    dispose() {
+        if (this.audioElement) {
+            this.audioElement.pause();
+            this.audioElement.removeAttribute('src');
+            this.audioElement.load();
+        }
     }
 }
